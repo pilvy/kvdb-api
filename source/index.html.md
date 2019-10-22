@@ -1,15 +1,13 @@
 ---
-title: API Reference
+title: KVdb API Reference
 
-language_tabs: # must be one of https://git.io/vQNgJ
-  - shell
-  - ruby
-  - python
-  - javascript
+#language_tabs: # must be one of https://git.io/vQNgJ
+#  - shell: cURL
+#  - javascript: jQuery
 
 toc_footers:
-  - <a href='#'>Sign Up for a Developer Key</a>
-  - <a href='https://github.com/lord/slate'>Documentation Powered by Slate</a>
+  - <a href="/docs/" title="KVdb Documentation">Documentation</a>
+  - <a href="/" title="KVdb Key Value Database">KVdb Home</a>
 
 includes:
   - errors
@@ -19,221 +17,267 @@ search: true
 
 # Introduction
 
-Welcome to the Kittn API! You can use our API to access Kittn API endpoints, which can get information on various cats, kittens, and breeds in our database.
+Welcome to the <a href="/">KVdb</a> API! You can use our simple REST API to store arbitrary key-value pairs, which can contain any type of data, such as text, numbers, counters, and binary data. Depending on the data type, the API offers additional features to make collecting and accessing data easier.
 
-We have language bindings in Shell, Ruby, and Python! You can view code examples in the dark area to the right, and you can switch the programming language of the examples with the tabs in the top right.
-
-This example API documentation page was created with [Slate](https://github.com/lord/slate). Feel free to edit it and use it as a base for your own API's documentation.
+While all the examples are given in Shell script (using curl on the command line), it's possible to request JSON and URL-encoded output.
 
 # Authentication
 
-> To authorize, use this code:
-
-```ruby
-require 'kittn'
-
-api = Kittn::APIClient.authorize!('meowmeowmeow')
-```
-
-```python
-import kittn
-
-api = kittn.authorize('meowmeowmeow')
-```
+> To authenticate with a bucket secret or write key:
 
 ```shell
-# With shell, you can just pass the correct header with each request
-curl "api_endpoint_here"
-  -H "Authorization: meowmeowmeow"
+# Provide the key as the username using HTTP Basic authentication
+curl https://kvdb.io/BUCKET/KEY
+  -u 'mykey:'
+
+# Or in the query string
+curl https://kvdb.io/BUCKET/KEY?key=mykey
 ```
 
-```javascript
-const kittn = require('kittn');
+While not all API endpoints require the use of an API key, should you choose to use one, use the key in the username field when sending HTTP Basic authentication credentials. The key can also e specified in the `key` query string parameter.
 
-let api = kittn.authorize('meowmeowmeow');
+In any case, use of the bucket secret key provides full access to the bucket, where as the bucket write key provides write access to any keys in the bucket. You SHOULD NOT use either of these in client-side applications.
+
+# Authorization
+
+> To generate an access token valid for 1 hour with read/write permission for the prefix user:123:
+
+```shell
+curl https://kvdb.io/BUCKET/tokens/
+  -d 'prefix=user:123:&permissions=read,write&ttl=3600'
+  -u mykey:
 ```
 
-> Make sure to replace `meowmeowmeow` with your API key.
+> To authorize a request with an access token:
 
-Kittn uses API keys to allow access to the API. You can register a new Kittn API key at our [developer portal](http://example.com/developers).
+```shell
+# Provide the access token in the Authorization header
+curl https://kvdb.io/BUCKET/KEY
+  -H "Authorization: Bearer MY_TOKEN"
 
-Kittn expects for the API key to be included in all API requests to the server in a header that looks like the following:
+# Or in the query string
+curl https://kvdb.io/BUCKET/KEY?access_token=MY_TOKEN
+```
 
-`Authorization: meowmeowmeow`
+For most applications, you do not want to give out the bucket's secret or write keys, since it gives clients access to all keys in the bucket. Instead, you can use the KVdb API to generate access tokens, which grant the holder access to a specific prefixed portion of the key space with an exact set of permissions. By default, access tokens are stateless and have a fixed lifetime.
+
+Key naming schemes are often prefixed with some path containing the application user ID, for example, `user:123:email`, `user:123:profile`, etc. A secure way to grant a user of your application read/write access to only their own set of sub-keys is to generate an access token for the key with their user ID prefix, `user:123:` for instance. Furthermore, the access token can embed only the minimum set of permissions required.
+
+Access tokens offer the ability to securely provide external access to your bucket resources without an intermediate authentication or authorization layer, while still maintining application-level control.
+
+
+# Rate Limits
+
+The rate limit is 1,000 requests per IP address per hour. Refer to the `X-Ratelimit-Limit`, `X-Ratelimit-Remaining`, and `X-Ratelimit-Reset` response headers to know when you are approaching the limit. Once the rate limit is reached, the server will return a HTTP 429 status code until the rate limit resets.
+
+Paid plans have a much more generous rate limit allowance.
+
+# Buckets
+
+A bucket is a collection of keys. The keys in a bucket share the same access keys, expiration (TTL) setting, and other bucket policy. Depending on your application, you may use one bucket for all your keys, or segregate keys based on users, groups, or other categorization in your application.
+
+You may create bucket-specific access keys:
+
+Key         | Default | Set this to...
+----------- | ------- | -----------
+secret_key  | None    | Manage bucket policy and other keys
+read_key    | None    | Prevent public reads from the bucket
+write_key   | None    | Prevent public writes to the bucket
+signing_key | None    | Enable access token generation
+
+Set the `signing_key` to a random, yet secure value, as it will be used to generate cryptographically signed access tokens. Changing the `signing_key` will immediately invalidate all previously issued access tokens.
+
+In addition, you may configure the following bucket policies:
+
+Setting     | Default          | Meaning
+----------- | ---------------- | -------
+default_ttl | 604800 (1 week)  | Keys not updated expire after this time (seconds)
 
 <aside class="notice">
-You must replace <code>meowmeowmeow</code> with your personal API key.
+Disabling key expiration (<code>default_ttl=0</code>) or increasing it beyond 1 week requires a paid plan.
 </aside>
 
-# Kittens
 
-## Get All Kittens
+## Create a Bucket
 
-```ruby
-require 'kittn'
+When creating a bucket, ensure that you set a valid email address in order to be able to manage the bucket in the future and avoid loss of data.
 
-api = Kittn::APIClient.authorize!('meowmeowmeow')
-api.kittens.get
+```shell
+# Create a new bucket that lets anyone read, write, and list keys
+curl -d 'email=user@example.com' https://kvdb.io
 ```
 
-```python
-import kittn
+> The above command returns the bucket id as plain text:
 
-api = kittn.authorize('meowmeowmeow')
-api.kittens.get()
+```text
+N7cmQg1DwZbADh2Hu3NncF
 ```
 
 ```shell
-curl "http://example.com/api/kittens"
-  -H "Authorization: meowmeowmeow"
+# Create a new bucket with a secret_key, write_key,
+# and set all keys to expire after 1 hour
+curl https://kvdb.io \
+     -d 'email=user@example.com' \
+     -d 'secret_key=supersecret' \
+     -d 'write_key=knock' \
+     -d 'default_ttl=3600'
 ```
 
-```javascript
-const kittn = require('kittn');
+Our API will generate a bucket id for you to use. Make sure to set a `secret_key` to protect the bucket. It is not possible to add a `secret_key` to a bucket after creation, however, it is possible to change it.
 
-let api = kittn.authorize('meowmeowmeow');
-let kittens = api.kittens.get();
+There is no API to list publicly-accessible buckets, so using a bucket without an access key is safe as long as the bucket id isn't made public. We only recommend these kinds of buckets for testing purposes.
+
+
+## Update Bucket Policy
+
+```shell
+# Make bucket read-only
+curl https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF \
+     -d 'write_key=knock' \
+     -u 'supersecret:' \
+     -XPATCH
 ```
 
-> The above command returns JSON structured like this:
+If a bucket has a `secret_key` set, you may update its policy (and the `secret_key` itself).
 
-```json
+
+## List Keys
+
+```shell
+# List keys
+curl https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF/ \
+     -u 'supersecret:'
+
+# List keys with the prefix hits_2018
+curl 'https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF/?prefix=hits_2018' \
+     -u 'supersecret:'
+
+# List keys and their values as JSON
+curl 'https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF/?values=true&format=json' \
+     -u 'supersecret:'
+```
+
+> This would return an array of JSON arrays with key-value pairs:
+
+```shell
 [
-  {
-    "id": 1,
-    "name": "Fluffums",
-    "breed": "calico",
-    "fluffiness": 6,
-    "cuteness": 7
-  },
-  {
-    "id": 2,
-    "name": "Max",
-    "breed": "unknown",
-    "fluffiness": 5,
-    "cuteness": 10
-  }
+  ["visitors", 101],
+  ["flavor-today", "coconut"]
 ]
 ```
 
-This endpoint retrieves all kittens.
+Listing keys in a bucket is simple. If the bucket is protected by a `secret_key`, be sure to provide it.
 
-### HTTP Request
+The following query string paramateres can be used to influence the output:
 
-`GET http://example.com/api/kittens`
+Parameter | Default          | Meaning
+--------- | ---------------- | -------
+limit     | 10000            | Maximum number of keys to return
+skip      | 0                | Number of keys to skip before returning first result
+prefix    | _none_           | Only return keys matching the given prefix
+values    | false            | Return values
+format    | _Accept_ header  | Change the output format (see below)
 
-### Query Parameters
+The HTTP `Accept` header is used to determine the output if the `format` parameter is not specified. If no specific header is sent, `text` is assumed.
 
-Parameter | Default | Description
---------- | ------- | -----------
-include_cats | false | If set to true, the result will also include cats.
-available | true | If set to false, the result will include kittens that have already been adopted.
+The following formats are supported:
 
-<aside class="success">
-Remember — a happy kitten is an authenticated kitten!
-</aside>
+Format    | Without Values | With Values          | Value Escaping
+--------- | -------------- | -------------------- | ---------------
+text      | `key`          | `key=value`          | Newline: `\n`
+json      | `["key"]`      | `[["key", value]]`   | None
+jsonl     | `"key"`        | `["key", value]`     | None
 
-## Get a Specific Kitten
+`jsonl` is newline-delimited JSON, a format easy to process with command-line and other tools expecting one JSON object per line. It must be specifically requested with a `?format=jsonl` query string.
 
-```ruby
-require 'kittn'
 
-api = Kittn::APIClient.authorize!('meowmeowmeow')
-api.kittens.get(2)
-```
-
-```python
-import kittn
-
-api = kittn.authorize('meowmeowmeow')
-api.kittens.get(2)
-```
+## Delete Bucket
 
 ```shell
-curl "http://example.com/api/kittens/2"
-  -H "Authorization: meowmeowmeow"
+# Delete bucket
+curl https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF/ \
+     -XDELETE
+     -u 'supersecret:'
 ```
 
-```javascript
-const kittn = require('kittn');
+Use this to delete a bucket and all of its keys. For large buckets, this operation may not complete immediately, even though a successful response is returned by the API.
 
-let api = kittn.authorize('meowmeowmeow');
-let max = api.kittens.get(2);
-```
 
-> The above command returns JSON structured like this:
+# Keys
 
-```json
-{
-  "id": 2,
-  "name": "Max",
-  "breed": "unknown",
-  "fluffiness": 5,
-  "cuteness": 10
-}
-```
+Key names can be of arbitrary composition (even binary data), but are limited to 128 bytes in length. Values can be of any data type but are limited to 16 KB in size. Numeric values are detected automatically and are enforced by the API.
 
-This endpoint retrieves a specific kitten.
 
-<aside class="warning">Inside HTML code blocks like this one, you can't use Markdown, so use <code>&lt;code&gt;</code> blocks to denote code.</aside>
-
-### HTTP Request
-
-`GET http://example.com/kittens/<ID>`
-
-### URL Parameters
-
-Parameter | Description
---------- | -----------
-ID | The ID of the kitten to retrieve
-
-## Delete a Specific Kitten
-
-```ruby
-require 'kittn'
-
-api = Kittn::APIClient.authorize!('meowmeowmeow')
-api.kittens.delete(2)
-```
-
-```python
-import kittn
-
-api = kittn.authorize('meowmeowmeow')
-api.kittens.delete(2)
-```
+## Set a Key Value
 
 ```shell
-curl "http://example.com/api/kittens/2"
-  -X DELETE
-  -H "Authorization: meowmeowmeow"
+# Set key
+curl https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF/hello \
+     -d 'world'
+
+# Set key with a 30 second expiry
+curl https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF/hello?ttl=30 \
+     -d 'world'
 ```
 
-```javascript
-const kittn = require('kittn');
+The maximum length of a key is 128 bytes.
 
-let api = kittn.authorize('meowmeowmeow');
-let max = api.kittens.delete(2);
+To override the bucket's default key expiration, use the `ttl` query parameter to specify the TTL for this key.
+
+
+## Get a Key Value
+
+```shell
+# Get value
+curl https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF/hello
 ```
 
-> The above command returns JSON structured like this:
+> The response is the value:
 
-```json
-{
-  "id": 2,
-  "deleted" : ":("
-}
+```text
+world
 ```
 
-This endpoint deletes a specific kitten.
 
-### HTTP Request
+## Update a Key (Counter)
 
-`DELETE http://example.com/kittens/<ID>`
+```shell
+# Increment counter by 1
+curl https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF/visits
+     -d '+1'
+     -XPATCH
+```
 
-### URL Parameters
+> The API responds with the new value of the counter:
 
-Parameter | Description
---------- | -----------
-ID | The ID of the kitten to delete
+```text
+1
+```
 
+To store counters, the server will detect integer (64-bit signed) and floating point (64-bit) values and store them efficiently, to allow incrementing and decrementing them. Use the `PATCH` HTTP method to operate on a value this way. If the key does not exist, it is created and assumed to be zero before the operation.
+
+To increment the value, use `+`.
+
+To decrement the value, use `-`.
+
+You can also use the `ttl` query parameter to set the TTL for this key.
+
+
+## Delete a Key
+
+```shell
+# Delete key
+curl https://kvdb.io/N7cmQg1DwZbADh2Hu3NncF/hello \
+     -XDELETE
+```
+
+If you need to delete a key before it expires, use this method.
+
+
+# Scripting
+
+KVdb provides a powerful Lua-based scripting API that lets you build server-side functionality with fast access to keys and values. Each bucket can have one or more scripts, which execute in the context of that bucket and an HTTP request. Furthermore, the keys a script can access can be restricted by the permissions granted by the access token in the HTTP request. With these features, scripts can be used to implement any imaginable level of server-side business logic.
+
+Refer to the <a href="/docs/scripting">Scripting Reference</a> for the full Lua API.
+
+To view and create your scripts, visit https://kvdb.io/BUCKET/scripts/
